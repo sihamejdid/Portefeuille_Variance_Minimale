@@ -1,6 +1,8 @@
 # M1_Projet_programmation_portef_min_var
 Notre projet a pour but de créer un outil qui minimise la volatilité d'un portefeuille tout en maximisant son rendement.
 
+ATTENTION 
+
 /!\ Il vous est fortement recommandé d'analyser le fichier HTML afin de percevoir les sorties de code dans leur entièreté.
 En effet le fichier Rmd des slides à necéssairement dû etre coupé en plusieurs chunk compte tenu du fait que les lignes de code ne s'affichaient pas en entier sur une slide. Pour une lecture plus à l'aise du code, le fichier HTML est donc à privilégier /!\
 
