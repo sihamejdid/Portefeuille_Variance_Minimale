@@ -1,0 +1,749 @@
+---
+title: "Projet Technique de Programmation"
+subtitle: "*Comment minimiser la variance d’un portefeuille tout en assurant des performances optimales dans un environnement financier en constante évolution ?*"
+author: 
+- Belinda Aydogmus
+- Myriam Magda Benoudina
+- Sihame Jdid
+institute: "FSEG - Université de Strasbourg"
+date: "Années 2024-2025"
+output: 
+  beamer_presentation:
+    toc: true 
+    theme: Dresden
+    slide_level: 2
+    latex_engine: pdflatex
+header-includes:
+   - \usepackage{booktabs}
+   - \usepackage{dcolumn}
+   - \usepackage{longtable}
+   - \usepackage{array}
+   - \AtBeginDocument{\scriptsize}
+---
+
+```{r setup, include=FALSE}
+# Configuration globale des options des chunks
+knitr::opts_chunk$set(
+  size = 'tiny'            # Taille de texte pour les sorties (par exemple, les rendus de code)
+)
+```
+
+# Introduction
+
+L'objectif de ce projet est de concevoir un outil complet d'analyse et d'optimisation de portefeuille financier basé sur des données de rendements mensuels des indices sectoriels du STOXX 600. L'outil se concentre sur la minimisation de la variance du portefeuille tout en garantissant des performances compétitives. Deux stratégies sont explorées : un portefeuille équipondéré, qui répartit les fonds de manière uniforme entre les titres, et un portefeuille optimisé à variance minimale, construit en tenant compte des corrélations entre les rendements des titres. 
+
+Les métriques utilisées incluent des indicateurs de performance clés comme l'équivalent certain (EC), le ratio de Sharpe, la volatilité et la valeur à risque (VaR). Ce projet vise à offrir une comparaison approfondie entre ces deux approches et à évaluer leurs performances sur des périodes glissantes. En définitive, cet outil a pour but d'aider les investisseurs à prendre des décisions éclairées en maximisant le rendement pour un niveau de risque donné.
+
+# I. Chargement des données
+
+Cette partie du code initialise l’environnement en nettoyant les variables existantes et en chargeant les bibliothèques nécessaires. Il lit ensuite les données financières du fichier CSV, convertit les dates au format approprié, et isole les données des rendements des titres pour notre analyse.
+
+---
+
+```{r, echo=TRUE, results='hide',warning=FALSE,message=FALSE}
+# Nettoyage de l'environnement 
+rm(list = ls())
+
+#```{r, echo=TRUE, results='hide',warning=FALSE,message=FALSE} : code visible, sortie non visible
+#```{r setup, include=FALSE} : code pas visible  
+#```{r warning=FALSE,message=FALSE} : code visible
+#```{r, echo=FALSE, warning=FALSE, message=FALSE} : sortie visible mais pas le code
+
+# Chargement des bibliothèques nécessaires
+if (!require("tidyverse")) install.packages("tidyverse", dependencies = TRUE)
+if (!require("quadprog")) install.packages("quadprog", dependencies = TRUE)
+if (!requireNamespace("kableExtra", quietly = TRUE)) {
+  install.packages("kableExtra")
+}
+
+library(kableExtra)
+library(tidyverse)
+library(quadprog)
+library(dplyr)
+library(knitr)
+library(ggplot2)
+library(tidyr)
+```
+
+---
+
+```{r, echo=TRUE, results='hide',warning=FALSE,message=FALSE}
+# Définition du chemin pour charger les données
+chemin <- "C:/Users/siham/OneDrive/Documents/M1/S1/PROGRAMMATION/Projet/rendements.csv"
+
+# Chargement des données depuis le fichier CSV
+rendements <- read.csv2(chemin) 
+
+# Conversion de la colonne Date
+rendements$date <- as.Date(rendements$date, format = "%d/%m/%Y")
+
+# Sélection des titres à partir de la 3ème colonne (exclusion des deux premières)
+titres_data <- rendements[, 3:ncol(rendements)]
+
+# Isolation de la colonne des dates
+dates <- rendements$date  # Extraction de la colonne `date`
+# Vérification des données : Affichage des premières lignes
+titres_data
+
+```
+
+
+# II. Optimisation 
+## A. Portefeuille équipondéré
+### 1. Matrice de covariance
+
+Le portefeuille équipondéré est une stratégie de base où chaque titre reçoit un poids égal, reflétant une approche d'investissement naïve mais efficace pour faire des comparaisons. Le code calcule d'abord le nombre de titres disponibles, les rendements moyens de chaque titre, et la matrice de covariance entre les rendements. À partir de ces données, les poids équipondérés sont déterminés en attribuant une fraction égale à chaque titre ( $\frac{1}{n}$ où $n$ est le nombre de titres).
+
+---
+
+```{r, echo=TRUE, results='hide',warning=FALSE,message=FALSE}
+# Portefeuille équipondéré -------------------------------------------------
+# Ce bloc calcule les parts équipondérées, les rendements moyens des titres,
+# et intègre la matrice de covariance dans un tableau final.
+
+# Nombre de titres et calculs des statistiques de base
+nbre_titres <- ncol(titres_data)  # Nombre de colonnes restantes après sélection (19 titres)
+mean_returns <- colMeans(titres_data)  # Moyennes des rendements des titres
+cov_matrix <- cov(titres_data)  # Matrice de covariance
+
+# Calcul des parts équipondérées
+equip_weights <- rep(1 / nbre_titres, nbre_titres)  # Poids égaux pour chaque titre
+
+# Construction de la feuille "optimisation" pour le portefeuille équipondéré
+feuille_equiponderee <- tibble(
+  titres = colnames(titres_data),  # Noms des titres
+  parts = paste0(round(equip_weights * 100, 2), "%"),  # Poids équipondérés en pourcentage
+  Er = paste0(round(mean_returns * 100, 2), "%")  # Rendements moyens en pourcentage
+) %>%
+  bind_cols(as_tibble(round(cov_matrix, 4)))  # Ajouter la matrice de covariance
+
+# Affichage du tableau final
+print(feuille_equiponderee)
+
+```
+
+---
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+# SORTIE DE CODE
+# Sélectionner les 19 premières lignes et les 4 premières colonnes
+tableau_partiel <- feuille_equiponderee[1:19, 1:4]
+
+# Afficher le tableau avec kable pour un rendu joli
+knitr::kable(
+  tableau_partiel,  # Tableau sélectionné
+  format = "markdown",  # Format Markdown pour l'affichage
+  caption = "Tableau Equipondéré : 19 premières lignes et 4 premières colonnes",  # Titre du tableau
+  align = c("l", "r", "r", "r")  # Alignement des colonnes
+)
+
+```
+
+---
+
+###  2. Métriques pour le portefeuille équipondéré 
+
+Les métriques calculées pour ce portefeuille incluent :
+
+- Le rendement attendu $Er = \sum_{i=1}^n{w_i\cdot\mu_i}$ avec $w_i$ les poids et $\mu_i$ les rendements moyens.
+- La variance $(\sigma^2)$
+- L'écart-type StDev
+- Le ratio de Sharpe : mesure la performance ajustée au risque, soit le rapport entre le rendement moyen et l’écart-type
+- La VaR (Value at Risk) $5\%$ : indicateur du reste de perte extrêe à un niveau de confiance de 95% selon une loi normale.
+- La concentration : indice donnant la concentration du portefeuille en faisant la somme des carrés des parts des secteurs c'est-à-dire $\sum_{j}{(x_j)^2}$. Plus le portefeuille est diversifié, plus sa valeur tend vers 0.
+- L'équivalent Certain $(EC)$ : différence entre le rendement moyen du portefeuille et un multiple de la variance du portefeille dépendant d'un coefficient d'aversion au risque : $EC = E[r_p] - \frac{\gamma}{2}\sigma^2(r_p)$. Où $\gamma = 3$ le coefficient d'aversion qu'on définit pour la suite de notre projet. Plus ce coefficient est grand, plus l'individu est prodent. 
+
+Cela permet d’établir un tableau de synthèse qui fournit une base pour comparer cette stratégie à des approches plus complexes.
+
+---
+
+```{r, echo=TRUE, results='hide',warning=FALSE,message=FALSE}
+# Calcul du rendement annuel attendu (Er) du portefeuille équipondéré
+portfolio_return_equip <- sum(equip_weights * mean_returns) * 12
+
+# Calcul de la variance annuelle du portefeuille équipondéré via la matrice de covariance et les poids
+portfolio_variance_equip <- t(equip_weights) %*% cov_matrix %*% equip_weights * 12  
+
+# Calcul de la volatilité annuelle (StDev) du portefeuille équipondéré, en prenant la racine carrée de la variance
+portfolio_volatility_equip <- sqrt(portfolio_variance_equip)  
+
+# Calcul du ratio de Sharpe du portefeuille équipondéré, mesurant le rendement ajusté au risque
+sharpe_ratio_equip <- portfolio_return_equip / portfolio_volatility_equip  
+
+# Calcul de la VaR (Value at Risk) à 5% pour le portefeuille équipondéré
+var_5_equip <- portfolio_return_equip - 1.645 * portfolio_volatility_equip  
+
+# Calcul de la mesure de concentration du portefeuille équipondéré
+concentration_equip <- sum(equip_weights^2)
+```
+
+---
+
+```{r, echo=TRUE, results='hide',warning=FALSE,message=FALSE}
+# Création du tableau de synthèse pour le portefeuille équipondéré
+tableau_equiponderee <- tibble(
+  # Noms des métriques clés pour évaluer la performance du portefeuille
+  Metric = c("EC", "Ratio de Sharpe", "Er", "StDev", "VAR 5% N", "Variance", "Concentration"),
+  # Valeurs des métriques pour le portefeuille équipondéré
+  `Portefeuille Équipondéré` = c(
+    # Equivalent Certain (EC) : rendement corrigé du risque
+    paste0(round(portfolio_return_equip - (3 / 2) * portfolio_variance_equip, 4) * 100, "%"),  
+    # Ratio de Sharpe, arrondi à deux décimales pour simplifier l'interprétation
+    round(sharpe_ratio_equip, 2),  
+    # Rendement attendu annualisé (Er), exprimé en pourcentage
+    paste0(round(portfolio_return_equip, 4) * 100, "%"),  
+    # Volatilité annualisée (StDev), exprimée en pourcentage
+    paste0(round(portfolio_volatility_equip, 4) * 100, "%"),  
+    # VaR à 5%, exprimée en pourcentage, indiquant le maximum de perte anticipée dans 95% des cas
+    paste0(round(var_5_equip, 4) * 100, "%"),  
+    # Variance annualisée, exprimée en pourcentage
+    paste0(round(portfolio_variance_equip, 4) * 100, "%"),  
+    # Mesure de la concentration du portefeuille, arrondie à quatre décimales
+    round(concentration_equip, 4)  
+  )
+)
+# Affichage du tableau pour vérifier les résultats
+print(tableau_equiponderee)
+```
+
+---
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+# SORTIE DE CODE
+# Affichage du tableau
+knitr::kable(
+  tableau_equiponderee,  # Le tableau à afficher
+  format = "markdown",  # Format Markdown pour l'affichage
+  caption = "Portefeuille Equipondéré"  # Titre du tableau
+)
+
+```
+
+## B. Portefeuille de variance minimale
+### 1. Matrice de covariance
+
+Il est maintenant question de mettre en oeuvre une optimisation pour construire un portefeuille de variance minimale. Ici, les poids des titres sont ajustés de manière à minimiser la variance totale du portefeuille, en utilisant la matrice de covariance pour équilibrer les relations entre les rendements. Cette stratégie est particulièrement utile pour les investisseurs souhaitant réduire leur exposition au risque global. Contrairement au portefeuille équipondéré, ce portefeuille tient compte des interactions complexes entre les titres pour atteindre une répartition des fonds optimale en termes de risque.
+
+Le problème d’optimisation quadratique est résolu à l’aide de la bibliothèque quadprog. 
+L'objectif est de minimiser la variance sous deux contraintes principales : 
+
+- La somme des poids doit être égale à 1 : $\sum_{i=1}^n{w_i=1}$
+- Les poids doivent être positifs : $w_i \geq 0$
+
+---
+
+En d'autres termes, voici le programme à résoudre :
+$$\left\{\begin{array}{c}
+min_{x_j} \ \sigma^2(r_p) \\
+\sum_{j}{x_j} = 1 \\
+\forall j,x_j \geq 0 \end{array}
+\right.$$
+
+Autrement dit, on va chercher à minimiser la variance en fixant les parts $x_j$ sous la double contrainte que la somme des parts doit être égale à 1 (contrainte budgéaire) et que chaque part va être positive ou nulle (interdiction de la vente à décourvert).
+
+La solution obtenue ajuste les poids de manière à maximiser la diversification tout en minimisant l'exposition au risque.
+
+---
+
+```{r, echo=TRUE, results='hide',warning=FALSE,message=FALSE}
+# Portefeuille de variance minimale ----------------------------------------
+# Ce bloc optimise les poids des titres pour minimiser la variance totale,
+# tout en respectant la contrainte que la somme des poids = 100%.
+
+# Fonction pour optimiser le portefeuille
+optimize_portfolio <- function(mean_returns, cov_matrix) {
+  n <- length(mean_returns)  # Nombre de titres
+  Dmat <- cov_matrix  # Matrice des variances-covariances
+  dvec <- rep(0, n)  # Vecteur nul pour minimisation
+  Amat <- cbind(rep(1, n), diag(n))  # Contraintes : somme des poids = 1 et poids >= 0
+  bvec <- c(1, rep(0, n))  # Valeurs des contraintes
+  result <- solve.QP(Dmat, dvec, Amat, bvec, meq = 1)  # Résolution de l'optimisation
+  result$solution  # Retourne les poids optimaux
+}
+
+# Calcul des poids optimaux
+optimal_weights <- optimize_portfolio(mean_returns, cov_matrix)
+```
+
+---
+  
+```{r, echo=TRUE, results='hide',warning=FALSE,message=FALSE}
+# Construction de la feuille "optimisation" pour le portefeuille à variance minimale
+feuille_variance_minimale <- tibble(
+  titres = colnames(titres_data),  # Noms des titres
+  parts = paste0(round(optimal_weights * 100, 2), "%"),  # Poids optimaux au format pourcentage
+  Er = paste0(round(mean_returns * 100, 2), "%")  # Rendements moyens au format pourcentage
+) %>%
+  bind_cols(as_tibble(round(cov_matrix, 4)))  # Ajouter la matrice de covariance
+
+# Affichage du tableau final
+feuille_variance_minimale
+
+```
+---
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+# Affichage du tableau final
+# Sélectionner les 19 premières lignes et les 4 premières colonnes de feuille_variance_minimale
+tableau_partiel_variance <- feuille_variance_minimale[1:19, 1:4]
+
+# Afficher le tableau avec kable
+knitr::kable(
+  tableau_partiel_variance,  # Tableau sélectionné
+  format = "markdown",  # Format Markdown pour l'affichage
+  caption = "Tableau Var Min : 19 premières lignes et 4 premières colonnes",  # Titre du tableau
+  align = c("l", "r", "r", "r", "r")  # Alignement des colonnes
+)
+
+```
+
+---
+
+###  2. Métriques pour le portefeuille de variance minimale 
+
+Les métriques calculées pour ce portefeuille sont identiques à celles du portefeuille équipondéré (rendement, variance, volatilité, ratio de Sharpe, VaR), mais elles reflètent l'optimisation mathématique des poids. 
+
+---
+
+```{r, echo=TRUE, results='hide',warning=FALSE,message=FALSE}
+# Calcul du rendement annuel attendu (Er) pour le portefeuille de variance minimale
+portfolio_return_min_var <- sum(optimal_weights * mean_returns) * 12  
+
+# Calcul de la variance annuelle du portefeuille de variance minimale
+# La variance est calculée à partir des poids optimaux et de la matrice de covariance
+portfolio_variance_min_var <- t(optimal_weights) %*% cov_matrix %*% optimal_weights * 12  
+
+# Calcul de la volatilité annuelle (StDev), obtenue en prenant la racine carrée de la variance
+portfolio_volatility_min_var <- sqrt(portfolio_variance_min_var)  
+# Calcul du ratio de Sharpe du portefeuille, qui mesure le rendement ajusté au risque
+sharpe_ratio_min_var <- portfolio_return_min_var / portfolio_volatility_min_var  
+
+# Calcul de la Value at Risk (VaR) à 5% pour le portefeuille, exprimant la perte potentielle maximum 
+# sur une période donnée dans 95% des cas (1.645 représente le quantile normal à 5%)
+var_5_min_var <- portfolio_return_min_var - 1.645 * portfolio_volatility_min_var  
+
+# Calcul de la mesure de concentration du portefeuille
+# Elle est obtenue en sommant les poids au carré, ce qui permet d'évaluer la diversification
+concentration_min_var <- sum(optimal_weights^2)  
+```
+
+---
+  
+```{r, echo=TRUE, results='hide',warning=FALSE,message=FALSE}
+# Création du tableau de synthèse pour le portefeuille de variance minimale
+tableau_min_variance <- tibble(
+  # Noms des métriques clés pour évaluer la performance
+  Metric = c("EC", "Ratio de Sharpe", "Er", "StDev", "VAR 5% N", "Variance", "Concentration"),
+  # Valeurs des métriques calculées pour le portefeuille
+  `Portefeuille Min Variance` = c(
+    # Equivalent Certain (EC) : rendement corrigé du risque
+    paste0(round(portfolio_return_min_var - (3 / 2) * portfolio_variance_min_var, 4) * 100, "%"),  
+    # Ratio de Sharpe : rendement ajusté au risque
+    round(sharpe_ratio_min_var, 2),  
+    # Rendement attendu annualisé (Er), exprimé en pourcentage
+    paste0(round(portfolio_return_min_var, 4) * 100, "%"),  
+    # Volatilité annualisée (StDev), exprimée en pourcentage
+    paste0(round(portfolio_volatility_min_var, 4) * 100, "%"),  
+    # Value at Risk (VaR) à 5%, exprimée en pourcentage
+    paste0(round(var_5_min_var, 4) * 100, "%"),  
+    # Variance annualisée, exprimée en pourcentage
+    paste0(round(portfolio_variance_min_var, 4) * 100, "%"),  
+    # Mesure de concentration, arrondie à quatre décimales
+    round(concentration_min_var, 4)  
+  )
+)
+# Affichage du tableau pour vérifier les résultats calculés
+print(tableau_min_variance)
+```
+
+---
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+# Afficher le tableau avec kable
+knitr::kable(
+  tableau_min_variance,  # Le tableau à afficher
+  format = "markdown",  # Format Markdown pour l'affichage
+  caption = "Portefeuille qui minimise la variance"  # Titre du tableau
+)
+
+```
+
+# III. Performances
+## A. Perfomances des portefeuilles 
+
+Dans cette partie, il sera question d'évaluer les performances de trois portefeuilles (variance minimale, équipondéré et marché) sur des périodes glissantes de 36 mois, avec un décalage de 6 mois entre chaque période. 
+
+Pour chaque fenêtre, on extrait rendements des titres pour la période sélectionnée, calcule les rendements moyens et la matrice de covariance, puis optimise les poids des portefeuilles pour minimiser la variance totale. 
+
+Les performances sont mesurées à l'aide de métriques clés telles que le rendement annualisé, la volatilité, le ratio de Sharpe et la VaR à 5 %. Les résultats sont organisés dans un tableau détaillé, contenant les performances de chaque portefeuille pour chaque période. La colonne des dates est incluse pour identifier les périodes d’analyse. Ce tableau est la base pour générer les graphiques illustrant les performances des portefeuilles dans le temps.
+
+---
+
+```{r, echo=TRUE, results='hide',warning=FALSE,message=FALSE}
+# Paramètres pour les périodes glissantes
+horizon <- 36  # Fenêtre de 36 mois
+step <- 6  # Décalage de 6 mois entre les périodes
+```
+
+---
+  
+```{r, echo=TRUE, results='hide',warning=FALSE,message=FALSE}
+# Fonction pour analyser les performances d'un portefeuille
+analyze_performance <- function(weights, mean_returns, cov_matrix, horizon) {
+  
+  # Calcul du rendement attendu : somme des produits des poids des actifs et de leurs rendements moyens
+  portfolio_return <- sum(weights * mean_returns)
+  # Calcul de la variance : multiplication matricielle des poids transposés, de la matrice de covariance et des poids
+  portfolio_variance <- t(weights) %*% cov_matrix %*% weights
+  # Calcul de la volatilité : racine carrée de la variance pour obtenir l'écart-type (mesure de dispersion des rendements)
+  portfolio_volatility <- sqrt(portfolio_variance)
+  # Calcul du ratio de Sharpe (annualisé) : ratio du rendement annualisé divisé par la volatilité annualisée
+  # Rendement annualisé = rendement mensuel * 12
+  # Volatilité annualisée = volatilité mensuelle * racine de 12
+  sharpe_ratio <- (portfolio_return * 12) / (portfolio_volatility * sqrt(12))
+  # Calcul de la VaR (Value at Risk) à 5% (annualisée) : 
+  # VaR = rendement annualisé - 1.645 * volatilité annualisée
+  # 1.645 correspond au quantile pour un intervalle de confiance de 5% dans une distribution normale
+  var_5 <- (portfolio_return * 12) - 1.645 * (portfolio_volatility * sqrt(12))
+  
+  # Retourne les résultats dans un tableau organisé
+  tibble(
+    return = portfolio_return * 12,  # Rendement annualisé : rendement mensuel multiplié par 12
+    volatility = portfolio_volatility * sqrt(12),  # Volatilité annualisée : écart-type multiplié par racine de 12
+    sharpe = sharpe_ratio,  # Ratio de Sharpe annualisé
+    var_5 = var_5  # Valeur à risque annualisée à 5%
+  )
+}
+```
+
+---
+
+```{r, echo=TRUE, results='hide',warning=FALSE,message=FALSE}
+# Initialisation de la liste pour stocker les résultats des performances de chaque période
+results <- list()
+
+# Boucle sur des périodes glissantes pour effectuer les calculs
+# La séquence commence à 1, s'arrête à (nrow(rendements) - horizon) et avance par des pas définis par `step`
+for (start in seq(1, nrow(rendements) - horizon, by = step)) {
+  
+  # Extraction des données de rendements pour une fenêtre temporelle définie
+  # Les colonnes 3 à ncol(rendements) contiennent les rendements des titres individuels
+  sample_data <- rendements[start:(start + horizon - 1), 3:ncol(rendements)]
+  
+  # Calcul des rendements moyens mensuels des titres sur la période glissante
+  mean_returns <- colMeans(sample_data)
+  # Calcul de la matrice de covariance des rendements des titres sur la période
+  cov_matrix <- cov(sample_data)
+  # Calcul des performances pour le portefeuille de variance minimale
+  # Les poids optimaux sont obtenus à partir de la fonction `optimize_portfolio`
+  optimal_weights <- optimize_portfolio(mean_returns, cov_matrix)
+  
+  # Analyse des performances de ce portefeuille (rendement, volatilité, Sharpe, VaR)
+  perf_min_var <- analyze_performance(optimal_weights, mean_returns, cov_matrix, horizon)
+  
+  # Calcul des performances pour le portefeuille équipondéré
+  # Chaque actif a un poids identique égal à 1/nombre d'actifs
+  equip_weights <- rep(1 / ncol(sample_data), ncol(sample_data))
+  # Analyse des performances du portefeuille équipondéré
+  perf_equip <- analyze_performance(equip_weights, mean_returns, cov_matrix, horizon)
+  # Calcul des performances pour l'indice de marché
+  # Extraction des rendements de la colonne 2 (indice de marché) pour la période
+  market_returns <- rendements[start:(start + horizon - 1), 2]
+  # Calcul du rendement moyen mensuel de l'indice de marché
+  mean_market <- mean(market_returns)
+  # Calcul de l'écart-type (volatilité) des rendements du marché
+  sd_market <- sd(market_returns)
+  # Calcul du ratio de Sharpe (annualisé) pour l'indice de marché
+  # Rendement annualisé = rendement mensuel * 12
+  # Volatilité annualisée = volatilité mensuelle * racine de 12
+  sharpe_market <- (mean_market * 12) / (sd_market * sqrt(12))
+  # Calcul de la VaR à 5% pour l'indice de marché
+  # VaR = rendement annualisé - 1.645 * volatilité annualisée
+  var_5_market <- (mean_market * 12) - 1.645 * (sd_market * sqrt(12))
+  
+  # Stockage des résultats de l'indice de marché dans un tableau
+  perf_mkt <- tibble(
+    return = mean_market * 12,  # Rendement annualisé
+    volatility = sd_market * sqrt(12),  # Volatilité annualisée
+    sharpe = sharpe_market,  # Ratio de Sharpe annualisé
+    var_5 = var_5_market  # VaR à 5% annualisée
+  )
+  
+  # Stockage des performances calculées pour la période dans un tableau
+  results[[length(results) + 1]] <- tibble(
+    start_date = rendements[start, 1],  # Date de début de la période glissante
+    EC_min_var = perf_min_var$return - (3 / 2) * (perf_min_var$volatility)^2,  # Equivalent certain (EC) pour le portefeuille de variance minimale
+    EC_equip = perf_equip$return - (3 / 2) * (perf_equip$volatility)^2,  # EC pour le portefeuille équipondéré
+    EC_mkt = perf_mkt$return - (3 / 2) * (perf_mkt$volatility)^2,  # EC pour l'indice de marché
+    Sharpe_min_var = perf_min_var$sharpe,  # Ratio de Sharpe pour le portefeuille de variance minimale
+    Sharpe_equip = perf_equip$sharpe,  # Ratio de Sharpe pour le portefeuille équipondéré
+    Sharpe_mkt = perf_mkt$sharpe,  # Ratio de Sharpe pour l'indice de marché
+    Er_min_var = perf_min_var$return,  # Rendement annualisé pour le portefeuille de variance minimale
+    Er_equip = perf_equip$return,  # Rendement annualisé pour le portefeuille équipondéré
+    Er_mkt = perf_mkt$return,  # Rendement annualisé pour l'indice de marché
+    Vol_min_var = perf_min_var$volatility,  # Volatilité annualisée pour le portefeuille de variance minimale
+    Vol_equip = perf_equip$volatility,  # Volatilité annualisée pour le portefeuille équipondéré
+    Vol_mkt = perf_mkt$volatility,  # Volatilité annualisée pour l'indice de marché
+    VAR_5_min_var = perf_min_var$var_5,  # VaR à 5% annualisée pour le portefeuille de variance minimale
+    VAR_5_equip = perf_equip$var_5,  # VaR à 5% annualisée pour le portefeuille équipondéré
+    VAR_5_mkt = perf_mkt$var_5  # VaR à 5% annualisée pour l'indice de marché
+  )
+}
+```
+
+---
+  
+```{r, echo=TRUE, results='hide',warning=FALSE,message=FALSE}
+# Combine toutes les périodes glissantes stockées dans la liste `results` en un seul tableau de données
+feuille_performances <- bind_rows(results)
+# Convertit la colonne `start_date` en format jour/mois/année pour un affichage plus lisible
+# `as.Date` gère la conversion au format date, et `format` applique le format spécifique "jj/mm/aaaa"
+feuille_performances <- feuille_performances %>%
+  mutate(start_date = format(as.Date(start_date), "%d/%m/%Y"))
+# Mise en forme des colonnes pour un affichage clair et lisible
+feuille_performances_affiche <- feuille_performances %>%
+  mutate(
+    # Ajoute un symbole `%` aux colonnes contenant des pourcentages
+    across(
+      c(EC_min_var, EC_equip, EC_mkt, Er_min_var, Er_equip, Er_mkt, 
+        Vol_min_var, Vol_equip, Vol_mkt, VAR_5_min_var, VAR_5_equip, VAR_5_mkt),
+      ~ paste0(round(. * 100, 1), "%")  # Multiplie par 100 pour convertir en pourcentage, arrondi à 1 décimale
+    ),
+    # Arrondit les colonnes du ratio de Sharpe à 2 décimales sans ajouter de symboles
+    across(
+      c(Sharpe_min_var, Sharpe_equip, Sharpe_mkt),
+      ~ round(., 2)  # Ratio de Sharpe reste sous forme numérique brute
+    )
+  )
+# Affiche le tableau final formaté dans la console pour vérification ou exportation
+print(feuille_performances_affiche)
+
+```
+
+---
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+# SORTIE DE CODE
+# Sélectionner les 7 premières colonnes et les 10 premières lignes
+tableau_partiel <- feuille_performances_affiche[1:10, 1:7]
+
+# Afficher le tableau avec kable
+knitr::kable(
+  tableau_partiel,  # Tableau sélectionné
+  format = "markdown",  # Format Markdown pour l'affichage
+  caption = "Performances du portefeuille (7 premières colonnes et 10 premières lignes)",  # Titre du tableau
+  col.names = colnames(tableau_partiel),  # Noms des colonnes
+  align = c("l", rep("r", ncol(tableau_partiel) - 1))  # Alignement des colonnes (gauche pour la première, droite pour le reste)
+)
+
+
+```
+
+---
+
+## B. Métriques des portefeuilles
+
+Le petit tableau qu'on va générer représente les moyennes des performances clés (Equivalent Certain - EC, Sharpe, Er, volatilité, et VaR) pour les trois portefeuilles analysés : 
+
+- Le portefeuille de variance minimale (min var)
+- Le portefeuille équipondéré (equip)
+- Le marché (mkt)
+
+Les valeurs moyennes sont calculées sur l'ensemble des périodes glissantes de 36 mois pour chacune des métriques. Le tableau synthétise les résultats pour une comparaison directe des trois stratégies.
+
+---
+
+```{r, echo=TRUE, results='hide',warning=FALSE,message=FALSE}
+# Calcul des moyennes des métriques clés pour chaque portefeuille
+moyennes_performances <- feuille_performances %>%
+  summarise(
+    EC_min_var = mean(EC_min_var, na.rm = TRUE),
+    EC_equip = mean(EC_equip, na.rm = TRUE),
+    EC_mkt = mean(EC_mkt, na.rm = TRUE),
+    Sharpe_min_var = mean(Sharpe_min_var, na.rm = TRUE),
+    Sharpe_equip = mean(Sharpe_equip, na.rm = TRUE),
+    Sharpe_mkt = mean(Sharpe_mkt, na.rm = TRUE),
+    Er_min_var = mean(Er_min_var, na.rm = TRUE),
+    Er_equip = mean(Er_equip, na.rm = TRUE),
+    Er_mkt = mean(Er_mkt, na.rm = TRUE),
+    Vol_min_var = mean(Vol_min_var, na.rm = TRUE),
+    Vol_equip = mean(Vol_equip, na.rm = TRUE),
+    Vol_mkt = mean(Vol_mkt, na.rm = TRUE),
+    VAR_5_min_var = mean(VAR_5_min_var, na.rm = TRUE),
+    VAR_5_equip = mean(VAR_5_equip, na.rm = TRUE),
+    VAR_5_mkt = mean(VAR_5_mkt, na.rm = TRUE)
+  )
+```
+
+---
+
+```{r, echo=TRUE, results='hide',warning=FALSE,message=FALSE}
+# Restructuration pour créer le tableau formaté
+tableau_performances_moyennes <- tibble(
+  Metric = c("EC", "Sharpe", "Er", "volat", "VAR"),
+  `min var` = c(
+    moyennes_performances$EC_min_var * 100,  # Mise en pourcentage pour EC
+    moyennes_performances$Sharpe_min_var,   # Sharpe reste tel quel
+    moyennes_performances$Er_min_var * 100, # Mise en pourcentage pour Er
+    moyennes_performances$Vol_min_var * 100, # Mise en pourcentage pour Volatilité
+    moyennes_performances$VAR_5_min_var * 100 # Mise en pourcentage pour VAR
+  ),
+  `equip` = c(
+    moyennes_performances$EC_equip * 100,
+    moyennes_performances$Sharpe_equip,
+    moyennes_performances$Er_equip * 100,
+    moyennes_performances$Vol_equip * 100,
+    moyennes_performances$VAR_5_equip * 100
+  ),
+  `mkt` = c(
+    moyennes_performances$EC_mkt * 100,
+    moyennes_performances$Sharpe_mkt,
+    moyennes_performances$Er_mkt * 100,
+    moyennes_performances$Vol_mkt * 100,
+    moyennes_performances$VAR_5_mkt * 100
+  )
+)
+```
+
+---
+  
+```{r, echo=TRUE, results='hide',warning=FALSE,message=FALSE}
+# Ajout du formatage : % pour toutes les colonnes sauf Sharpe
+tableau_performances_moyennes <- tableau_performances_moyennes %>%
+  mutate(
+    `min var` = ifelse(Metric == "Sharpe", round(`min var`, 2), paste0(round(`min var`, 1), "%")),
+    `equip` = ifelse(Metric == "Sharpe", round(`equip`, 2), paste0(round(`equip`, 1), "%")),
+    `mkt` = ifelse(Metric == "Sharpe", round(`mkt`, 2), paste0(round(`mkt`, 1), "%"))
+  )
+
+# Affichage du tableau formaté
+print(tableau_performances_moyennes)
+
+```
+
+---
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+
+# Affichage d'un joli tableau avec kable pour tableau_performances_moyennes
+knitr::kable(
+  tableau_performances_moyennes,  # Le tableau à afficher
+  format = "markdown",  # Format Markdown pour l'affichage dans les slides
+  caption = "Performances Moyennes des Portefeuilles",  # Titre du tableau
+  col.names = colnames(tableau_performances_moyennes),  # Noms des colonnes
+  align = c("l", rep("r", ncol(tableau_performances_moyennes) - 1))  # Alignement des colonnes (gauche pour la première, droite pour le reste)
+)
+
+```
+
+# IV. Graphiques
+
+Les graphiques permettent de visualiser les performances des trois stratégies étudiées : portefeuille équipondéré, portefeuille à variance minimale, et marché. Chaque graphique illustre une métrique spécifique (EC, ratio de Sharpe, rendement attendu, volatilité) sur la période d’analyse. La bibliothèque ggplot2 est utilisée pour tracer les courbes, avec une personnalisation des axes et une légende claire identifiant les différentes stratégies.
+
+---
+
+```{r, echo=TRUE, results='hide',warning=FALSE,message=FALSE}
+# Création des graphiques avec les 3 courbes : Min Var, Equip, Market
+# Préparation des données pour les graphiques
+data_graph <- feuille_performances %>%  # Utilisation du dataframe `feuille_performances` pour préparer les données
+  pivot_longer(  # Transformation du dataframe en format long pour faciliter la visualisation avec ggplot2
+    cols = -start_date,  # Toutes les colonnes sauf 'start_date' sont converties en deux colonnes
+    names_to = c("Metric", "Portfolio"),  # Les noms des colonnes sont séparés en deux nouvelles colonnes : 'Metric' et 'Portfolio'
+    names_pattern = "(.*)_(.*)"  # Le nom de chaque colonne est divisé en deux parties séparées par un underscore (_)
+  ) %>%
+  mutate(  # Applique des transformations supplémentaires aux données
+    Portfolio = recode(  # Remplace les valeurs de la colonne 'Portfolio' pour les rendre plus lisibles
+      Portfolio,
+      var = "Min Var",  # Remplace 'var' par 'Min Var'
+      equip = "Equip",  # Remplace 'equip' par 'Equip'
+      mkt = "Market"  # Remplace 'mkt' par 'Market'
+    ),
+    Metric = case_when(  # Remplace les valeurs de la colonne 'Metric' en fonction de mots-clés
+      grepl("EC", Metric) ~ "EC",  # Si 'Metric' contient "EC", le nom devient "EC"
+      grepl("Sharpe", Metric) ~ "Sharpe",  # Si 'Metric' contient "Sharpe", le nom devient "Sharpe"
+      grepl("Er", Metric) ~ "Er",  # Si 'Metric' contient "Er", le nom devient "Er"
+      grepl("Vol", Metric) ~ "Vol",  # Si 'Metric' contient "Vol", le nom devient "Vol"
+      grepl("VAR_5", Metric) ~ "VAR 5%",  # Si 'Metric' contient "VAR_5", le nom devient "VAR 5%"
+      TRUE ~ Metric  # Sinon, la valeur reste inchangée
+    ),
+    start_date = as.Date(start_date, format = "%d/%m/%Y")  # Convertit la colonne 'start_date' en format date
+  )
+```
+
+---
+  
+```{r, echo=TRUE, results='hide',warning=FALSE,message=FALSE}
+# Fonction pour tracer les graphiques avec trois courbes
+# Définition de la fonction pour tracer les graphiques d'une métrique spécifique
+plot_metric <- function(metric_name, y_label, is_percentage = FALSE) {  # Déclaration de la fonction avec trois arguments : 'metric_name', 'y_label' et un argument optionnel 'is_percentage'
+  # Filtrage des données pour la métrique spécifiée
+  metric_data <- data_graph %>%  # Filtre les données pour ne conserver que les lignes correspondant à la métrique donnée
+    filter(Metric == metric_name)  # Applique un filtre sur la colonne 'Metric' pour sélectionner uniquement les lignes correspondant à 'metric_name'
+  # Création du graphique avec ggplot
+  ggplot(metric_data, aes(x = start_date, y = value, color = Portfolio)) +  # Initialise ggplot avec 'start_date' sur l'axe x, 'value' sur l'axe y, et 'Portfolio' comme couleur
+    geom_line(size = 1) +  # Ajoute une ligne pour chaque série, avec une épaisseur de ligne de 1
+    labs(  # Ajoute des labels au graphique
+      title = metric_name,  # Le titre du graphique est défini par le nom de la métrique
+      x = "Date",  # Label de l'axe x
+      y = y_label  # Label de l'axe y (passé en argument à la fonction)
+    ) +
+    scale_y_continuous(  # Modification de l'échelle de l'axe y
+      labels = if (is_percentage) scales::percent_format(scale = 1) else scales::label_number()  # Si 'is_percentage' est TRUE, les valeurs sont formatées en pourcentage, sinon elles sont affichées sous forme numérique
+    ) +
+    theme_minimal() +  # Applique un thème minimaliste pour le graphique
+    theme(  # Personnalisation du thème
+      legend.title = element_blank(),  # Supprime le titre de la légende
+      legend.position = "bottom",  # Place la légende en bas du graphique
+      plot.title = element_text(size = 14, face = "bold", hjust = 0.5)  # Modifie le titre du graphique pour le rendre en gras, de taille 14, et centré horizontalement
+    )
+}
+```
+
+---
+
+```{r, echo=TRUE, results='hide',warning=FALSE,message=FALSE}
+# Création des graphiques pour chaque métrique
+plot_ec <- plot_metric("EC", "Equivalent Certain (EC)", TRUE)       # EC en pourcentage
+plot_sharpe <- plot_metric("Sharpe", "Sharpe Ratio", FALSE)         # Sharpe sans pourcentage
+plot_er <- plot_metric("Er", "Expected Return (Er)", TRUE)          # Er en pourcentage
+plot_vol <- plot_metric("Vol", "Volatility", TRUE)                  # Vol en pourcentage
+```
+
+
+---
+  
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+# Graphique pour EC
+print(plot_ec)
+```
+
+---
+  
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+# Graphique pour Sharpe
+print(plot_sharpe)   
+```
+
+---
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+# Graphique pour Er
+print(plot_er)       
+```
+
+---
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+# Graphique pour Volatilité
+print(plot_vol)      
+```
+
+# Conclusion
+
+Notre projet met en lumière les avantages d’une optimisation basée sur la minimisation de la variance pour la gestion de portefeuilles. Le portefeuille à variance minimale, bien qu'il offre des rendements similaires au portefeuille équipondéré, réduit significativement la volatilité et donc le risque global. Cette analyse montre également l’importance de surveiller les performances dans le temps, car les environnements économiques dynamiques influencent fortement les rendements et le risque.
+
+Nous avons conçu une stratégie d'optimisation de portefeuille visant à minimiser le risque tout en maximisant le rendement. En comparant les résultats des différents portefeuilles, nous avons constaté que le portefeuille de variance minimale surperforme à la fois le portefeuille équipondéré et l'indice de marché. Avec une volatilité plus faible de 9,3% et un rendement attendu de 8,4%, ce portefeuille réduit efficacement le risque tout en maintenant un rendement compétitif. De plus, son ratio de Sharpe de 1,11 montre qu'il génère un meilleur rendement pour chaque unité de risque prise. La VaR à 5% de -6,9% témoigne également d'une gestion prudente du risque. En résumé, la stratégie de variance minimale nous permet d'atteindre notre objectif de réduction du risque tout en obtenant un rendement attractif, confirmant son efficacité dans l'optimisation du compromis entre rendement et risque.
+
+---
+
+L’outil développé fournit une approche systématique pour analyser et optimiser les portefeuilles. Il pourrait être enrichi en intégrant davantage de contraintes ou en tenant compte de métriques supplémentaires (par exemple, les coûts de transaction ou les préférences spécifiques des investisseurs). Ainsi, ce projet constitue une base solide pour toute recherche ou application future dans la gestion de portefeuilles.
